@@ -1,0 +1,10 @@
+val nat : Uni#0
+let nat = forall (T: Uni), (T -> T) -> T -> T
+
+val zero : nat
+let zero = \T.\s.\z. z
+
+val succ : nat -> nat
+let succ n = \T.\s.\z. s (n T s z)
+
+let test a b c = x y z
