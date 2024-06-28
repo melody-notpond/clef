@@ -1,24 +1,11 @@
 val nat : Uni
 let nat = forall (T: Uni), (T -> T) -> T -> T
 
-val zero : forall (T: Uni), (T -> T) -> T -> T
-let zero = \T.\s.\z. z
-
-val succ' : (forall (T: Uni), (T -> T) -> T -> T) ->
-    forall (T: Uni), (T -> T) -> T -> T
+val succ' : nat -> nat
 let succ' = \n.\T.\s.\z. s (n T s z)
 
-val succ : (forall (T: Uni), (T -> T) -> T -> T) ->
-    forall (T: Uni), (T -> T) -> T -> T
-let succ n = \T.\s.\z. s (n T s z)
-
-
-{-
 val zero : nat
 let zero = \T.\s.\z. z
 
 val succ : nat -> nat
 let succ n = \T.\s.\z. s (n T s z)
-
-let test a b c = x y z
--}

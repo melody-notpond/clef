@@ -1,7 +1,7 @@
 module Type (typecheck, makeDeBruijn) where
 import Term
-import Control.Monad (forM_)
-import Data.Maybe (isNothing, mapMaybe)
+import Control.Monad (forM_, when)
+import Data.Maybe (isNothing, mapMaybe, isJust)
 
 -- {x = e : T}
 type Context = [(String, (Maybe Term, Term))]
@@ -64,6 +64,7 @@ getType n =
     ctx <- get
     return $ incrDeBruijn (n + 1) $ snd $ snd $ ctx !! n
 
+-- variables always have to have a value to be looked up
 lookupValue :: String -> Checker Term
 lookupValue x =
   do
@@ -72,24 +73,23 @@ lookupValue x =
       Just (Just t, _) -> return t
       _ -> fail $ "could not find value for `" ++ x ++ "`"
 
-getValue :: Int -> Checker Term
+-- bindings dont have to though
+getValue :: Int -> Checker (Maybe Term)
 getValue n =
   do
     ctx <- get
-    case snd $ ctx !! n of
-      (Just t, _) -> return t
-      _ -> fail $ "could not find value for index " ++ show n
+    return $ incrDeBruijn (n + 1) <$> fst (snd $ ctx !! n)
 
 -- debug fail
-faild :: Maybe Term -> String -> Checker a
-faild (Just t) e =
-  do
-    ctx <- get
-    fail $ e ++ "\nwhile checking: " ++ show t ++ "\ncontext: " ++ show ctx
-faild Nothing e =
-  do
-    ctx <- get
-    fail $ e ++ "\ncontext: " ++ show ctx
+-- faild :: Maybe Term -> String -> Checker a
+-- faild (Just t) e =
+--   do
+--     ctx <- get
+--     fail $ e ++ "\nwhile checking: " ++ show t ++ "\ncontext: " ++ show ctx
+-- faild Nothing e =
+--   do
+--     ctx <- get
+--     fail $ e ++ "\ncontext: " ++ show ctx
 
 -- why is this not in the stdlib!
 insert :: Eq a => a -> b -> [(a, b)] -> [(a, b)]
@@ -165,14 +165,57 @@ eta :: Term -> Term
 eta (TApp (TLam _ _ (TApp f (TDeBruijn 0))) v) | eta' 0 f = TApp f v
 eta t = t
 
-used :: Int -> Term -> Bool
-used = eta'
 
+-- equality
 
-unify :: Term -> Term -> Checker ()
-unify a b | a == b = return ()
-unify a b = faild Nothing $
-  "could not unify terms " ++ show a ++ " and " ++ show b
+-- weak normal head form
+-- pi-forall uses this because nontermination + efficiency, so we will here too
+-- nontermination shouldnt be an issue though afaik
+wnhf :: Term -> Checker Term
+wnhf (TApp f e) =
+  do
+    f' <- wnhf f
+    case f' of
+      TLam {} ->
+        wnhf (beta (TApp f' e))
+      _ -> return $ TApp f' e
+wnhf (TAnn e _) = wnhf e
+wnhf (TVar x) =
+  do
+    v <- lookupValue x
+    wnhf v
+wnhf t@(TDeBruijn n) =
+  do
+    v <- getValue n
+    case v of
+      Just t' -> wnhf t'
+      Nothing -> return t
+wnhf t@(TLam {}) =
+  -- adding in eta reduction for more flexibility :3
+  case eta t of
+    t'@(TApp {}) -> wnhf t'
+    _ -> return t
+wnhf t = return t
+
+equate :: Term -> Term -> Checker ()
+equate a b | a == b = return ()
+equate a b =
+  do
+    a' <- wnhf a
+    b' <- wnhf b
+    ctx <- get
+    let ctx' = map fst ctx
+    modError (\_ ->
+      "could not equate terms " ++
+      show (fromDeBruijn ctx' a) ++ " and " ++
+      show (fromDeBruijn ctx' b)) $ equate' a' b'
+
+equate' :: Term -> Term -> Checker ()
+equate' (TApp f e) (TApp f' e') = equate f f' >> equate e e'
+equate' (TLam _ _ e) (TLam _ _ e') = equate e e'
+equate' (TPi (Just _) a r) (TPi (Just _) a' r') = equate a a' >> equate r r'
+equate' (TPi Nothing a r) (TPi Nothing a' r') = equate a a' >> equate r r'
+equate' _ _ = fail ""
 
 
 -- here is where we define our type checker, based on a bidirectional typing
@@ -189,19 +232,21 @@ inferType (TUni _) = return $ TUni Nothing
 inferType (TVar x) = lookupType x
 inferType (TDeBruijn n) = getType n
 
--- Γ |- f ==> ∀(x: A), B
---     Γ |- e <== A
----------------------------IApp
---  Γ |- f e ==> B[e/x]
+--       Γ |- f ==> A
+-- Γ |- wnhf A ~> ∀(x: A'), B
+--       Γ |- e <== A'
+-------------------------------IApp
+--    Γ |- f e ==> B[e/x]
 inferType (TApp f e) =
   do
-    t_f <- inferType f
-    (a, b) <- case t_f of
+    t <- inferType f
+    t' <- wnhf t
+    (a, b) <- case t' of
       TPi Nothing a b -> return (a, b)
       TPi (Just _) a b ->
         let b' = forceBeta b e in
         return (a, b')
-      _ -> faild (Just (TAnn f t_f)) "expected pi/function type"
+      _ -> fail "expected pi/function type"
     checkType e a
     return b
 
@@ -251,41 +296,64 @@ inferType (TLam {}) = fail "type inference of lambdas is unsupported"
 
 checkType :: Term -> Term -> Checker ()
 
+--   Γ |- e <== A
+-- Γ |- wnhf A ~> B
+----------------------CWnhf
+--   Γ |- e <== B
+checkType e t =
+  do
+    t' <- wnhf t
+    checkType' e t'
+
+checkType' :: Term -> Term -> Checker ()
+
 --       Γ |- A ==> 𝕌
 --     Γ,x:A |- e <== B
 ------------------------------CLam
 -- Γ |- λx.e <== ∀(x: A), B
-checkType (TLam x t e) t_pi@(TPi (Just _) a r) =
+checkType' (TLam x t e) t_pi@(TPi (Just _) a r) =
   do
     checkType t_pi $ TUni Nothing
-    forM_ t (unify a)
+    forM_ t (equate a)
     local ((x, (Nothing, a)):) $ checkType e r
-checkType (TLam x t e) t_pi@(TPi Nothing a r) =
+checkType' (TLam x t e) t_pi@(TPi Nothing a r) =
   do
     checkType t_pi $ TUni Nothing
-    forM_ t (unify a)
+    forM_ t (equate a)
     local ((x, (Nothing, a)):) $ checkType e (incrDeBruijn 1 r)
-checkType (TLam {}) _ = fail "lambda is always a pi/function type"
+checkType' (TLam {}) _ = fail "lambda is always a pi/function type"
 
 -- Γ |- a ==> A
+-- Γ |- A === B
 ------------------CInfer
--- Γ |- a <== A
-checkType e t =
+-- Γ |- a <== B
+checkType' e t =
   do
     t' <- inferType e
-    unify t t'
+    equate t t'
     return ()
 
 
 -- final typechecking stuff
 
-popArgs :: Term -> [String] -> Checker (Term, [(String, (Maybe Term, Term))])
-popArgs t [] = return (t, [])
-popArgs (TPi _ a t) (x:xs) =
+popArgs :: Term -> [String] -> Checker Term
+popArgs t = foldr (\x -> (<$>) (TLam x Nothing)) (return t)
+
+typeUndupped :: String -> Checker ()
+typeUndupped x =
   do
-    (t', xs') <-  popArgs t xs
-    return (t', (x, (Nothing, a)):xs')
-popArgs t (x:_) = fail $ "couldnt get type for `" ++ x ++ "` from " ++ show t
+    ctx <- get
+    when (isJust $ lookup x ctx) $ fail $
+      "`" ++ show x ++ "` has two type declarations"
+
+valueUndupped :: String -> Checker ()
+valueUndupped x =
+  do
+    ctx <- get
+    case lookup x ctx of
+      Just (Just _, _) -> fail $
+        "`" ++ show x ++ "` has two definitions" 
+      _ -> return ()
 
 checkTop :: [Top] -> Checker [(String, (Term, Term))]
 checkTop [] =
@@ -302,17 +370,19 @@ checkTop [] =
         ctx
 checkTop (TTyping x t : xs) =
   do
+    typeUndupped x
     modError (("in `" ++ show x ++ "`'s type: ")++) $
       checkType t $ TUni Nothing
     local ((x, (Nothing, t)):) $ checkTop xs
 checkTop (TAssign x args e : xs) =
   do
-    t <- modError (("in `" ++ x ++ "`'s value: ")++) $ do
+    valueUndupped x
+    (e', t) <- modError (("in `" ++ x ++ "`'s value: ")++) $ do
       t <- lookupType x
-      (t', add) <- popArgs t args
-      local (add++) $ checkType e t'
-      return t
-    local (insert x (Just e, t)) $ checkTop xs
+      e' <- popArgs e args
+      checkType e' t
+      return (e', t)
+    local (insert x (Just e', t)) $ checkTop xs
 
 makeDeBruijn :: [Top] -> [Top]
 makeDeBruijn [] = []
