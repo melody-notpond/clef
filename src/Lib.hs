@@ -1,4 +1,3 @@
-module Lib (someFunc) where
-
-someFunc :: IO ()
-someFunc = putStrLn "someFunc"
+module Lib (parse, typecheck, makeDeBruijn) where
+import Parse
+import Type

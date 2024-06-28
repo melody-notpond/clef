@@ -1,12 +1,23 @@
-module Term (Term (..), prettyTerm, Top (..)) where
+module Term
+  ( Term (..)
+  , Top (..)
+  , prettyTerm
+  , toDeBruijn
+  , toDeBruijn'
+  , fromDeBruijn
+  , remAssignArgs
+  ) where
+import Data.List (elemIndex)
 
 data Term =
     TUni (Maybe Int)
   | TVar String
+  | TDeBruijn Int
   | TAnn Term Term
   | TPi (Maybe String) Term Term
   | TLam String (Maybe Term) Term
   | TApp Term Term
+  deriving Eq
 
 data Top =
     TAssign String [String] Term
@@ -19,9 +30,10 @@ paren current wanted pretty =
   else pretty
 
 prettyTerm' :: Int -> Term -> String
-prettyTerm' _ (TUni Nothing) = "Uni"
-prettyTerm' _ (TUni (Just u)) = "Uni#" ++ show u
+prettyTerm' _ (TUni Nothing) = "𝕌"
+prettyTerm' _ (TUni (Just u)) = "𝕌#" ++ show u
 prettyTerm' _ (TVar x) = x
+prettyTerm' _ (TDeBruijn n) = "#" ++ show n
 prettyTerm' l (TAnn e t) = paren l 0 $
   prettyTerm' 1 e ++ ": " ++ prettyTerm' 1 t
 prettyTerm' l (TPi Nothing a r) = paren l 1 $
@@ -45,3 +57,36 @@ instance Show Top where
   show (TAssign x args e) =
     "let " ++ x ++ foldl (\b a -> b ++ " " ++ a) "" args ++ " = " ++ show e
   show (TTyping x t) = "val " ++ x ++ " : " ++ show t
+
+toDeBruijn' :: [String] -> Term -> Term
+toDeBruijn' ctx (TVar x) =
+  case elemIndex x ctx of
+    Just i -> TDeBruijn i
+    Nothing -> TVar x
+toDeBruijn' ctx (TLam x t e) = TLam x t (toDeBruijn' (x:ctx) e)
+toDeBruijn' ctx (TAnn e t) = TAnn (toDeBruijn' ctx e) (toDeBruijn' ctx t)
+toDeBruijn' ctx (TPi (Just x) a r) =
+    TPi (Just x) (toDeBruijn' ctx a) (toDeBruijn' (x:ctx) r)
+toDeBruijn' ctx (TPi Nothing a r) =
+  TPi Nothing (toDeBruijn' ctx a) (toDeBruijn' ctx r)
+toDeBruijn' ctx (TApp f a) = TApp (toDeBruijn' ctx f) (toDeBruijn' ctx a)
+toDeBruijn' _ t = t
+
+toDeBruijn :: Term -> Term
+toDeBruijn = toDeBruijn' []
+
+fromDeBruijn :: [String] -> Term -> Term
+fromDeBruijn ctx (TDeBruijn n) = TVar $ ctx !! n
+fromDeBruijn ctx (TLam x t e) = TLam x t (fromDeBruijn (x:ctx) e)
+fromDeBruijn ctx (TAnn e t) = TAnn (fromDeBruijn ctx e) (fromDeBruijn ctx t)
+fromDeBruijn ctx (TPi (Just x) a r) =
+  TPi (Just x) (fromDeBruijn ctx a) (fromDeBruijn (x:ctx) r)
+fromDeBruijn ctx (TPi Nothing a r) =
+  TPi Nothing (fromDeBruijn ctx a) (fromDeBruijn ctx r)
+fromDeBruijn ctx (TApp f a) = TApp (fromDeBruijn ctx f) (fromDeBruijn ctx a)
+fromDeBruijn _ t = t
+
+remAssignArgs :: Top -> Top
+remAssignArgs (TAssign f (x:xs) e) =
+  remAssignArgs (TAssign f xs (TLam x Nothing e))
+remAssignArgs t = t

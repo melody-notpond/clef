@@ -3,7 +3,7 @@ module Main where
 import System.Environment (getArgs, getProgName)
 import System.IO
 import System.Exit (exitFailure, exitSuccess)
-import qualified Parse
+import qualified Lib
 import Data.Foldable (for_)
 
 data Opts =
@@ -39,7 +39,13 @@ main =
       Right (Check file) -> return (False, file)
       Right (Run file) -> return (True, file)
     contents <- withFile file ReadMode hGetContents'
-    tops <- case Parse.parse file contents of
+    tops <- case Lib.parse file contents of
       Left e -> hPutStrLn stderr e >> exitFailure
       Right v -> return v
     for_ tops print
+    putStrLn "\n-------------------------------------------------------------\n"
+    case Lib.typecheck tops of
+      Left e -> hPutStrLn stderr e >> exitFailure
+      Right v ->
+        for_ (map (\(x, (e, t)) -> x ++ ": " ++ show t ++ " = " ++ show e) v)
+          putStrLn
