@@ -1,0 +1,51 @@
+val swap : forall (A: Uni), forall (B: Uni), forall (C: Uni), 
+	(A -> B -> C) -> (B -> A -> C)
+let swap = \A.\B.\C.\f.\b.\a.f a b
+
+val Unit : Uni
+let Unit = forall (T: Uni), T -> T
+
+val recUnit : forall (T: Uni), T -> Unit -> T
+let recUnit T = \t.\u.u T t
+
+val unit : Unit
+let unit T t = recUnit T t (\T.\t.t)
+
+{-
+val indUnit : forall (C: Unit -> Uni),
+	C unit -> forall (x: Unit), C x
+let indUnit C h u = h
+-}
+
+val Prod : Uni -> Uni -> Uni
+let Prod A B = forall (T: Uni), (A -> B -> T) -> T
+
+val pair : forall (A: Uni), forall (B: Uni), A -> B -> Prod A B
+let pair = \A.\B.\a.\b.\T.\f.f a b
+
+val recProd : forall (A: Uni), forall (B: Uni), forall (T: Uni),
+	(A -> B -> T) -> Prod A B -> T
+let recProd A B T = \f.\p.p T f
+
+val proj1 : forall (A: Uni), forall (B: Uni), Prod A B -> A
+let proj1 A B = recProd A B A (\a.\b.a)
+
+val proj2 : forall (A: Uni), forall (B: Uni), Prod A B -> B
+let proj2 A B = recProd A B B (\a.\b.b)
+
+{-
+val indProd : forall (A: Uni), forall (B: Uni),
+	forall (C: Prod A B -> Uni),
+	(forall (x: A), forall (y: B), C (pair A B x y)) ->
+	forall (p: Prod A B), C p
+let indProd A B C h p = h (proj1 A B p) (proj2 A B p)
+-}
+
+val Nat : Uni
+let Nat = forall (T: Uni), (T -> T) -> T -> T
+
+val zero : Nat
+let zero = \T.\s.\z.z
+
+val succ : Nat -> Nat
+let succ n = \T.\s.\z. s (n T s z)

@@ -128,7 +128,7 @@ incrDeBruijn = beta'' 0
 
 beta' :: Int -> Term -> Term -> Term
 beta' n (TDeBruijn m) v | n == m = beta'' 0 n v
-beta' _ (TDeBruijn m) _ = TDeBruijn $ m - 1
+beta' n (TDeBruijn m) _ | m > n = TDeBruijn $ m - 1
 beta' n (TAnn e t) v = TAnn (beta' n e v) (beta' n t v)
 beta' n (TPi (Just x) a r) v = TPi (Just x) (beta' n a v) (beta' n' r v)
   where n' = n + 1
@@ -380,8 +380,9 @@ checkTop (TAssign x args e : xs) =
     (e', t) <- modError (("in `" ++ x ++ "`'s value: ")++) $ do
       t <- lookupType x
       e' <- popArgs e args
-      checkType e' t
-      return (e', t)
+      let e'' = toDeBruijn e'
+      checkType e'' t
+      return (e'', t)
     local (insert x (Just e', t)) $ checkTop xs
 
 makeDeBruijn :: [Top] -> [Top]

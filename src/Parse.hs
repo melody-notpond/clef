@@ -63,10 +63,17 @@ lexVal = symbol "val" $> () <?> "val"
 lexVar :: Parser String
 lexVar = lexeme
   (do
-    notFollowedBy (lexForall <|> lexLet <|> lexVal)
     x <- char '\'' <|> alphaNumChar
     xs <- many (char '\'' <|> alphaNumChar)
-    return (x:xs)) <?> "variable token"
+    let s = x:xs
+    if (s == "forall") ||
+      (s == "pi") ||
+      (s == "val") ||
+      (s == "let") ||
+      (s == "Uni")
+    then
+      fail "invalid symbol"
+    else return s) <?> "variable token"
 
 -- PARSERS
 
@@ -83,8 +90,8 @@ uni = lexeme
 
 value :: Parser Term
 value = choice [
-    try uni
-  , try var
+    try var
+  , try uni
   , between lexLParen lexRParen ann]
   <?> "value"
 
