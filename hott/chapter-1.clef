@@ -1,6 +1,39 @@
-val swap : forall (A: Uni), forall (B: Uni), forall (C: Uni), 
-	(A -> B -> C) -> (B -> A -> C)
-let swap = \A.\B.\C.\f.\b.\a.f a b
+val Sigma : forall (A: Uni), (A -> Uni) -> Uni
+let Sigma A P = forall (T: Uni), (forall (a: A), P a -> T) -> T
+
+val Exists : forall (A: Uni), (A -> Uni) -> Uni
+let Exists = Sigma
+
+val exPair : forall (A: Uni), forall (P: A -> Uni), forall (a: A),
+	P a -> Sigma A P
+let exPair A P a h = \T.\f.f a h
+
+val recSigma : forall (A: Uni), forall (P: A -> Uni), forall (T: Uni),
+	(forall (x: A), P x -> T) -> Sigma A P -> T
+let recSigma A P T f e = e T f
+
+val Eq : forall (A: Uni), A -> A -> Uni
+let Eq A x y = forall (T: A -> A -> Uni), (forall (x: A), T x x) -> T x y
+
+val refl : forall (A: Uni), forall (x: A), Eq A x x
+let refl A x = \T.\f.f x
+
+val recEq : forall (A: Uni), forall (x: A), forall (y: A),
+	forall (T: A -> A -> Uni), (forall (x: A), T x x) -> Eq A x y -> T x y
+let recEq A x y T r e = e T r
+
+{-
+val indEq :
+	forall (A: Uni),
+	forall (C: pi (x: A), pi (y: A), Eq A x y -> Uni),
+	(forall (x: A), C x x (refl A x)) -> pi (x: A), pi (y: A),
+	forall (p: Eq A x y), C x y p
+let indEq A C Crefl x y p = p C Crefl p
+
+{-
+let J = indEq
+-}
+-}
 
 val Unit : Uni
 let Unit = forall (T: Uni), T -> T
@@ -9,7 +42,8 @@ val recUnit : forall (T: Uni), T -> Unit -> T
 let recUnit T = \t.\u.u T t
 
 val unit : Unit
-let unit T t = recUnit T t (\T.\t.t)
+let unit = \T.\t.t
+
 
 {-
 val indUnit : forall (C: Unit -> Uni),
@@ -38,8 +72,27 @@ val indProd : forall (A: Uni), forall (B: Uni),
 	forall (C: Prod A B -> Uni),
 	(forall (x: A), forall (y: B), C (pair A B x y)) ->
 	forall (p: Prod A B), C p
+let indProd A B C Cpair p = Cpair (proj1 A B p) (proj2 A B p)
+
+val indProd : forall (A: Uni), forall (B: Uni),
+	forall (C: Prod A B -> Uni),
+	(forall (x: A), forall (y: B), C (pair A B x y)) ->
+	forall (p: Prod A B), C p
 let indProd A B C h p = h (proj1 A B p) (proj2 A B p)
 -}
+
+val Sum : Uni -> Uni -> Uni
+let Sum A B = forall (T: Uni), (A -> T) -> (B -> T) -> T
+
+val recSum : forall (A: Uni), forall (B: Uni), forall (T: Uni),
+	(A -> T) -> (B -> T) -> Sum A B -> T
+let recSum A B T fa fb s = s T fa fb
+
+val inl : forall (A: Uni), forall (B: Uni), A -> Sum A B
+let inl A B a = \T.\fa.\fb.fa a
+
+val inr : forall (A: Uni), forall (B: Uni), B -> Sum A B
+let inr A B b = \T.\fa.\fb.fb b
 
 val Nat : Uni
 let Nat = forall (T: Uni), (T -> T) -> T -> T
@@ -49,3 +102,15 @@ let zero = \T.\s.\z.z
 
 val succ : Nat -> Nat
 let succ n = \T.\s.\z. s (n T s z)
+
+val add : Nat -> Nat -> Nat
+let add n m = n Nat succ m
+
+{-
+val recNat : forall (T: Uni), T -> (Nat -> T -> T) -> Nat -> T
+let recNat T c0 cs = \n. n T ? c0
+-}
+
+val 2plus2 : Eq Nat (add (succ (succ zero)) (succ (succ zero)))
+	(succ (succ (succ (succ zero))))
+let 2plus2 = refl Nat (succ (succ (succ (succ zero))))
