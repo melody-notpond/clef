@@ -1,4 +1,4 @@
-module Type (typecheck, makeDeBruijn) where
+module Type (typecheck) where
 import Term
 import Control.Monad (forM_, when)
 import Data.Maybe (isNothing, mapMaybe, isJust)
@@ -180,7 +180,7 @@ wnhf (TApp f e) =
         wnhf (beta (TApp f' e))
       _ -> return $ TApp f' e
 wnhf (TAnn e _) = wnhf e
-wnhf (TVar x) =
+wnhf (TGlobal x) =
   do
     v <- lookupValue x
     wnhf v
@@ -199,16 +199,13 @@ wnhf t = return t
 
 equate :: Term -> Term -> Checker ()
 equate a b | a == b = return ()
+equate (TUni _) (TUni _) = return () -- HACK
 equate a b =
   do
     a' <- wnhf a
     b' <- wnhf b
-    ctx <- get
-    let ctx' = map fst ctx
     modError (\_ ->
-      "could not equate terms " ++
-      show (fromDeBruijn ctx' a) ++ " and " ++
-      show (fromDeBruijn ctx' b)) $ equate' a' b'
+      "could not equate terms " ++ show a ++ " and " ++ show b) $ equate' a' b'
 
 equate' :: Term -> Term -> Checker ()
 equate' (TApp f e) (TApp f' e') = equate f f' >> equate e e'
@@ -222,14 +219,14 @@ equate' _ _ = fail ""
 
 inferType :: Term -> Checker Term
 
-------------------IUni
--- Γ |- 𝕌 ==> 𝕌
-inferType (TUni _) = return $ TUni Nothing
+------------------------IUni
+-- Γ |- 𝕌#u ==> 𝕌#u+1
+inferType (TUni u) = return $ TUni u -- $ u + 1
 
 --   x:T in Γ
 ------------------IVar
 -- Γ |- x ==> T
-inferType (TVar x) = lookupType x
+inferType (TGlobal x) = lookupType x
 inferType (TDeBruijn n) = getType n
 
 --       Γ |- f ==> A
@@ -250,15 +247,15 @@ inferType (TApp f e) =
     checkType e a
     return b
 
---     Γ |- A <== 𝕌
---   Γ,x:A |- B <== 𝕌
+--     Γ |- A <== 𝕌#u
+--   Γ,x:A |- B <== 𝕌#u
 ---------------------------IPi
--- Γ |- ∀(x: A), B ==> 𝕌
+-- Γ |- ∀(x: A), B ==> 𝕌#u
 inferType (TPi (Just x) a b) =
   do
-    checkType a $ TUni Nothing
-    local ((x, (Nothing, a)):) $ checkType b $ TUni Nothing
-    return $ TUni Nothing
+    checkType a $ TUni 0
+    local ((x, (Nothing, a)):) $ checkType b $ TUni 0
+    return $ TUni 0
 
 --    Γ |- A <== 𝕌
 --    Γ |- B <== 𝕌
@@ -266,9 +263,9 @@ inferType (TPi (Just x) a b) =
 -- Γ |- A -> B ==> 𝕌
 inferType (TPi Nothing a b) =
   do
-    checkType a $ TUni Nothing
-    checkType b $ TUni Nothing
-    return $ TUni Nothing
+    checkType a $ TUni 0
+    checkType b $ TUni 0
+    return $ TUni 0
 
 --   Γ |- A <== 𝕌
 --   Γ |- a <== A
@@ -307,18 +304,28 @@ checkType e t =
 
 checkType' :: Term -> Term -> Checker ()
 
+--     u' > u
+------------------IUni
+-- Γ |- 𝕌#u <== 𝕌#u'
+checkType' (TUni _u) (TUni _u') =
+  return ()
+  -- if u' > u then
+  --   return ()
+  -- else fail $ show (TUni u) ++ " cannot be in universe " ++ show (TUni u')
+
+
 --       Γ |- A ==> 𝕌
 --     Γ,x:A |- e <== B
 ------------------------------CLam
 -- Γ |- λx.e <== ∀(x: A), B
 checkType' (TLam x t e) t_pi@(TPi (Just _) a r) =
   do
-    checkType t_pi $ TUni Nothing
+    checkType t_pi $ TUni 0
     forM_ t (equate a)
     local ((x, (Nothing, a)):) $ checkType e r
 checkType' (TLam x t e) t_pi@(TPi Nothing a r) =
   do
-    checkType t_pi $ TUni Nothing
+    checkType t_pi $ TUni 0
     forM_ t (equate a)
     local ((x, (Nothing, a)):) $ checkType e (incrDeBruijn 1 r)
 checkType' (TLam {}) _ = fail "lambda is always a pi/function type"
@@ -335,9 +342,6 @@ checkType' e t =
 
 
 -- final typechecking stuff
-
-popArgs :: Term -> [String] -> Checker Term
-popArgs t = foldr (\x -> (<$>) (TLam x Nothing)) (return t)
 
 typeUndupped :: String -> Checker ()
 typeUndupped x =
@@ -372,36 +376,16 @@ checkTop (TTyping x t : xs) =
   do
     typeUndupped x
     modError (("in `" ++ show x ++ "`'s type: ")++) $
-      checkType t $ TUni Nothing
+      checkType t $ TUni 0
     local ((x, (Nothing, t)):) $ checkTop xs
-checkTop (TAssign x args e : xs) =
+checkTop (TAssign x e : xs) =
   do
     valueUndupped x
-    (e', t) <- modError (("in `" ++ x ++ "`'s value: ")++) $ do
+    t <- modError (("in `" ++ x ++ "`'s value: ")++) $ do
       t <- lookupType x
-      e' <- popArgs e args
-      let e'' = toDeBruijn e'
-      checkType e'' t
-      return (e'', t)
-    local (insert x (Just e', t)) $ checkTop xs
-
-makeDeBruijn :: [Top] -> [Top]
-makeDeBruijn [] = []
-makeDeBruijn (TAssign x args e : xs) =
-  TAssign x args (toDeBruijn e) : makeDeBruijn xs
-makeDeBruijn (TTyping x t : xs) =
-  TTyping x (toDeBruijn t) : makeDeBruijn xs
-
-unmakeDeBruijn
-  :: Either String [(String, (Term, Term))]
-  -> Either String [(String, (Term, Term))]
-unmakeDeBruijn (Left e) = Left e
-unmakeDeBruijn (Right []) = Right []
-unmakeDeBruijn (Right ((x, (e, t)) : xs)) =
-  do
-    xs' <- unmakeDeBruijn $ Right xs
-    return $ (x, (fromDeBruijn [] e, fromDeBruijn [] t)) : xs'
+      checkType e t
+      return t
+    local (insert x (Just e, t)) $ checkTop xs
 
 typecheck :: [Top] -> Either String [(String, (Term, Term))]
-typecheck tops = reverse <$>
-  unmakeDeBruijn (chk (checkTop (makeDeBruijn tops)) [])
+typecheck tops = reverse <$> chk (checkTop tops) []

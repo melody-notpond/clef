@@ -1,15 +1,26 @@
 module Parse (parse) where
 
 import Term
-import Data.Void (Void)
-import Text.Megaparsec (Parsec, (<?>), optional, many, try, choice, notFollowedBy, between, runParser, eof)
+import Text.Megaparsec
+  ( Parsec
+  , (<?>)
+  , optional
+  , many
+  , try
+  , choice
+  , between
+  , runParser
+  , eof )
 import qualified Text.Megaparsec.Char.Lexer as L
 import Text.Megaparsec.Char (space1, string, char, alphaNumChar)
 import Control.Applicative ((<|>))
 import Data.Functor (($>))
 import Text.Megaparsec.Error (errorBundlePretty)
+import Data.List (elemIndex)
+import Data.Void (Void)
+import Control.Monad.Trans.Reader
 
-type Parser = Parsec Void String
+type Parser = ReaderT [String] (Parsec Void String)
 
 sc :: Parser ()
 sc = L.space
@@ -78,14 +89,19 @@ lexVar = lexeme
 -- PARSERS
 
 var :: Parser Term
-var = TVar <$> lexVar
+var =
+  do
+    v <- lexVar
+    g <- ask
+    return $ case elemIndex v g of
+      Just i -> TDeBruijn i
+      Nothing -> TGlobal v
 
 uni :: Parser Term
 uni = lexeme
   (do
     (string "Uni" <|> string "𝕌") $> ()
-    level <- optional (try (char '#' >> L.decimal))
-    return (TUni level))
+    TUni <$> try (char '#' >> L.decimal))
   <?> "universe"
 
 value :: Parser Term
@@ -98,7 +114,7 @@ value = choice [
 ann :: Parser Term
 ann =
   do
-    e <- choice [try piType, try lambda, app] 
+    e <- choice [try piType, try lambda, app]
     t <- optional (lexColon >> choice [try piType, try lambda, app])
     case t of
       Just t' -> return (TAnn e t') <?> "type annotation"
@@ -122,7 +138,7 @@ forAll =
     t <- choice [try piType, try lambda, app]
     lexRParen
     lexComma
-    p <- choice [try piType, try lambda, app]
+    p <- local (x:) (choice [try piType, try lambda, app])
     return (TPi (Just x) t p)
 
 piType :: Parser Term
@@ -145,7 +161,7 @@ lambda =
     (x, t) <- (lambdaBinding <|> (lexVar >>= \x -> return (x, Nothing)))
       <?> "lambda binding"
     lexDot
-    e <- choice [try lambda, app]
+    e <- local (x:) (choice [try lambda, app])
     return (TLam x t e)) <?> "lambda"
 
 app :: Parser Term
@@ -165,7 +181,9 @@ assign =
     f <- lexVar
     args <- many lexVar
     lexEquals
-    TAssign f args <$> term) <?> "assignment"
+    t <- local (reverse args++) term
+    let t' = foldr (`TLam` Nothing) t args
+    return $ TAssign f t') <?> "assignment"
 
 typing :: Parser Top
 typing =
@@ -185,6 +203,6 @@ top =
 
 parse :: String -> String -> Either String [Top]
 parse name contents =
-  case runParser top name contents of
+  case runParser (runReaderT top []) name contents of
     Left e -> Left $ errorBundlePretty e
     Right v -> Right v

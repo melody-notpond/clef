@@ -1,3 +1,3 @@
-module Lib (parse, typecheck, makeDeBruijn) where
+module Lib (parse, typecheck) where
 import Parse
 import Type
