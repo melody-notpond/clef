@@ -291,6 +291,20 @@ inferType (TAnn e t) =
 --       return $ TPi (Just x) t r'
 inferType (TLam {}) = fail "type inference of lambdas is unsupported"
 
+inferType (TEq (Just t) a b) =
+  do
+    checkType a t
+    checkType b t
+    return $ TUni 0
+
+inferType (TEq Nothing a b) =
+  do
+    t <- inferType a
+    checkType b t
+    return $ TUni 0
+
+inferType _ = fail "TODO"
+
 checkType :: Term -> Term -> Checker ()
 
 --   Γ |- e <== A
@@ -329,6 +343,17 @@ checkType' (TLam x t e) t_pi@(TPi Nothing a r) =
     forM_ t (equate a)
     local ((x, (Nothing, a)):) $ checkType e (incrDeBruijn 1 r)
 checkType' (TLam {}) _ = fail "lambda is always a pi/function type"
+
+--          Γ |- A <== 𝕌
+--          Γ |- a <== A
+------------------------------------
+--    Γ |- refl(A) a <== a =(A) a
+checkType' (TRefl a) t_eq@(TEq t' x y) =
+  do
+    checkType t_eq $ TUni 0
+    forM_ t' (checkType' a)
+    equate a x
+    equate a y
 
 -- Γ |- a ==> A
 -- Γ |- A === B

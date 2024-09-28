@@ -1,0 +1,6 @@
+val reflSimpl : forall (A: Uni#0), forall (a: A), a =(A) a
+let reflSimpl A := \a. refl a
+
+val eqEx : forall (A: Uni#0), forall (B: Uni#0), forall (f: A -> B),
+	forall (x: A), ((\x. f x) : A -> B) x =(B) f x
+let eqEx A B f x := refl (f x)

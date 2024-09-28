@@ -45,8 +45,14 @@ lexComma = symbol "," $> () <?> "comma"
 lexColon :: Parser ()
 lexColon = symbol ":" $> () <?> "colon"
 
+lexEqualsP :: Parser ()
+lexEqualsP = symbol "=(" $> () <?> "equals paren"
+
 lexEquals :: Parser ()
 lexEquals = symbol "=" $> () <?> "equals"
+
+lexDef :: Parser ()
+lexDef = symbol ":=" $> () <?> "define"
 
 lexLParen :: Parser ()
 lexLParen = symbol "(" $> () <?> "left paren"
@@ -71,6 +77,9 @@ lexLet = symbol "let" $> () <?> "let"
 lexVal :: Parser ()
 lexVal = symbol "val" $> () <?> "val"
 
+lexRefl :: Parser ()
+lexRefl = symbol "refl" $> () <?> "refl"
+
 lexVar :: Parser String
 lexVar = lexeme
   (do
@@ -81,6 +90,7 @@ lexVar = lexeme
       (s == "pi") ||
       (s == "val") ||
       (s == "let") ||
+      (s == "refl") ||
       (s == "Uni")
     then
       fail "invalid symbol"
@@ -114,8 +124,8 @@ value = choice [
 ann :: Parser Term
 ann =
   do
-    e <- choice [try piType, try lambda, app]
-    t <- optional (lexColon >> choice [try piType, try lambda, app])
+    e <- choice [try piType, try equals, try lambda, app]
+    t <- optional (lexColon >> choice [try piType, try equals, try lambda, app])
     case t of
       Just t' -> return (TAnn e t') <?> "type annotation"
       Nothing -> return e
@@ -123,9 +133,9 @@ ann =
 func :: Parser Term
 func =
   do
-    a <- choice [try lambda, app]
+    a <- choice [try equals, try lambda, app]
     lexLArrow
-    r <- choice [try piType, try lambda, app]
+    r <- choice [try piType, try equals, try lambda, app]
     return (TPi Nothing a r)
 
 forAll :: Parser Term
@@ -135,14 +145,24 @@ forAll =
     lexLParen
     x <- lexVar
     lexColon
-    t <- choice [try piType, try lambda, app]
+    t <- choice [try piType, try equals, try lambda, app]
     lexRParen
     lexComma
-    p <- local (x:) (choice [try piType, try lambda, app])
+    p <- local (x:) (choice [try piType, try equals, try lambda, app])
     return (TPi (Just x) t p)
 
 piType :: Parser Term
 piType = (try func <|> forAll) <?> "function/pi type"
+
+equals :: Parser Term
+equals =
+  do
+    a <- choice [try lambda, app]
+    t <- choice [try
+      (lexEqualsP >> do t <- term; lexRParen; return $ Just t),
+      lexEquals >> return Nothing]
+    b <- choice [try lambda, app]
+    return $ TEq t a b
 
 lambdaBinding :: Parser (String, Maybe Term)
 lambdaBinding =
@@ -166,10 +186,13 @@ lambda =
 
 app :: Parser Term
 app =
-  (do
+  try (do
     f <- value
     xs <- many value
-    return $ foldl TApp f xs) <?> "application"
+    return $ foldl TApp f xs) <|>
+  (do
+    lexRefl
+    TRefl <$> value) <?> "application"
 
 term :: Parser Term
 term = ann <?> "term"
@@ -180,7 +203,7 @@ assign =
     lexLet
     f <- lexVar
     args <- many lexVar
-    lexEquals
+    lexDef
     t <- local (reverse args++) term
     let t' = foldr (`TLam` Nothing) t args
     return $ TAssign f t') <?> "assignment"
