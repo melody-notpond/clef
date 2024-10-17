@@ -4,3 +4,7 @@ let reflSimpl A := \a. refl a
 val eqEx : forall (A: Uni#0), forall (B: Uni#0), forall (f: A -> B),
 	forall (x: A), ((\x. f x) : A -> B) x =(B) f x
 let eqEx A B f x := refl (f x)
+
+val eqSym : forall (A: Uni#0), forall (x: A), forall (y: A),
+	x =(A) y -> y =(A) x
+let eqSym A x y H := eqInd A x (\y. (y =(A) x)) (refl x) y H

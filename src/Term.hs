@@ -1,6 +1,7 @@
 module Term
   ( Term (..)
   , Top (..)
+  , showWith
   ) where
 import Control.Monad.Trans.Reader
 
@@ -11,6 +12,9 @@ data Term =
   -- variables
   | TGlobal String
   | TDeBruijn Int
+
+  -- assumed propositions
+  | TAssumed
 
   -- annotations
   | TAnn Term Term
@@ -46,12 +50,13 @@ paren current wanted p =
 
 prettyTerm :: Int -> Term -> PrettyM String
 prettyTerm _ (TUni u) = return $ "𝕌#" ++ show u
+prettyTerm _ TAssumed = return "ASSUMED"
 prettyTerm _ (TGlobal x) = return x
 prettyTerm _ (TDeBruijn n) =
   do
     g <- ask
     case g !? n of
-      Just x -> return $ "#" ++ x
+      Just x -> return $ x ++ "#" ++ show n
       Nothing -> return $ "#" ++ show n
 prettyTerm l (TAnn e t) = paren l 0 $ do
   e' <- prettyTerm 1 e
@@ -88,6 +93,9 @@ prettyTerm l (TEq (Just t) a b) = paren l 2 $ do
 prettyTerm l (TRefl a) = paren l 4 $ do
   a' <- prettyTerm 5 a
   return $ "refl " ++ a'
+
+showWith :: Term -> [String] -> String
+showWith t = runReader (prettyTerm 0 t) 
 
 instance Show Term where
   show t = runReader (prettyTerm 0 t) []
